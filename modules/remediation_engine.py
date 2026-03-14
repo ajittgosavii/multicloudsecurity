@@ -19,6 +19,8 @@ class RemediationEngine:
                 result = self._remediate_ec2(resource_id, vulnerability, remediation_data)
             elif resource_type == 'EKS':
                 result = self._remediate_eks(resource_id, vulnerability, remediation_data)
+            elif resource_type == 'ECS':
+                result = self._remediate_ecs(resource_id, vulnerability, remediation_data)
             elif resource_type == 'Lambda':
                 result = self._remediate_lambda(resource_id, vulnerability, remediation_data)
             else:
@@ -62,6 +64,22 @@ class RemediationEngine:
         else:
             return {'status': 'info', 'message': 'EKS remediation requires manual review in demo mode'}
     
+    def _remediate_ecs(self, cluster_name: str, vulnerability: Dict, remediation_data: Dict) -> Dict:
+        """Remediate ECS vulnerabilities"""
+        vuln_id = vulnerability.get('id', '')
+
+        if 'ECS-NO-CONTAINER-INSIGHTS' in vuln_id:
+            try:
+                self.clients['ecs'].update_cluster_settings(
+                    cluster=cluster_name,
+                    settings=[{'name': 'containerInsights', 'value': 'enabled'}]
+                )
+                return {'status': 'success', 'message': f'Enabled Container Insights on {cluster_name}'}
+            except Exception as e:
+                return {'status': 'error', 'message': f'Failed to enable Container Insights: {str(e)}'}
+        else:
+            return {'status': 'info', 'message': 'ECS remediation requires manual review'}
+
     def _remediate_lambda(self, function_name: str, vulnerability: Dict, remediation_data: Dict) -> Dict:
         """Remediate Lambda vulnerabilities"""
         return {'status': 'info', 'message': 'Lambda remediation requires manual review in demo mode'}

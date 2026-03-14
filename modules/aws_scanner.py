@@ -4,31 +4,37 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any
 
 class AWSScanner:
-    def __init__(self, aws_clients):
+    def __init__(self, aws_clients, region='us-east-1'):
         self.clients = aws_clients
-        
+        self.region = region
+
     def scan_ec2_instances(self) -> List[Dict]:
         """Scan EC2 instances for vulnerabilities using multiple AWS services"""
         try:
             instances = []
             response = self.clients['ec2'].describe_instances()
-            
+
             for reservation in response['Reservations']:
                 for instance in reservation['Instances']:
-                    # Get enhanced vulnerability data
                     vulnerabilities = self._check_ec2_vulnerabilities(instance)
-                    
-                    # Add Inspector findings if available
+
                     inspector_findings = self._get_inspector_findings(instance['InstanceId'])
                     vulnerabilities.extend(inspector_findings)
-                    
-                    # Add Security Hub findings
+
                     security_hub_findings = self._get_security_hub_findings(instance['InstanceId'])
                     vulnerabilities.extend(security_hub_findings)
-                    
+
+                    name = 'N/A'
+                    for tag in instance.get('Tags', []):
+                        if tag['Key'] == 'Name':
+                            name = tag['Value']
+                            break
+
                     instance_data = {
                         'resource_id': instance['InstanceId'],
+                        'resource_name': name,
                         'resource_type': 'EC2',
+                        'region': self.region,
                         'state': instance['State']['Name'],
                         'instance_type': instance.get('InstanceType', 'N/A'),
                         'launch_time': instance['LaunchTime'].isoformat(),
@@ -39,27 +45,29 @@ class AWSScanner:
                         'security_groups': [sg['GroupId'] for sg in instance.get('SecurityGroups', [])]
                     }
                     instances.append(instance_data)
-            
+
             return instances
         except Exception as e:
-            print(f"EC2 scan error: {e}")
+            print(f"EC2 scan error in {self.region}: {e}")
             return []
-    
+
     def scan_eks_clusters(self) -> List[Dict]:
         """Scan EKS clusters for vulnerabilities"""
         try:
             clusters = []
             response = self.clients['eks'].list_clusters()
-            
+
             for cluster_name in response['clusters']:
                 cluster_info = self.clients['eks'].describe_cluster(name=cluster_name)
                 cluster_data = cluster_info['cluster']
-                
+
                 vulnerabilities = self._check_eks_vulnerabilities(cluster_data)
-                
+
                 cluster = {
                     'resource_id': cluster_data['name'],
+                    'resource_name': cluster_data['name'],
                     'resource_type': 'EKS',
+                    'region': self.region,
                     'status': cluster_data['status'],
                     'version': cluster_data['version'],
                     'arn': cluster_data['arn'],
@@ -68,25 +76,148 @@ class AWSScanner:
                     'resources_vpc_config': cluster_data.get('resourcesVpcConfig', {})
                 }
                 clusters.append(cluster)
-            
+
             return clusters
         except Exception as e:
-            print(f"EKS scan error: {e}")
+            print(f"EKS scan error in {self.region}: {e}")
             return []
-    
+
+    def scan_ecs_clusters(self) -> List[Dict]:
+        """Scan ECS clusters and services for vulnerabilities"""
+        try:
+            clusters = []
+            list_response = self.clients['ecs'].list_clusters()
+            cluster_arns = list_response.get('clusterArns', [])
+
+            if not cluster_arns:
+                return []
+
+            describe_response = self.clients['ecs'].describe_clusters(
+                clusters=cluster_arns,
+                include=['SETTINGS', 'CONFIGURATIONS', 'STATISTICS']
+            )
+
+            for cluster_data in describe_response.get('clusters', []):
+                vulnerabilities = self._check_ecs_vulnerabilities(cluster_data)
+
+                # Get services in this cluster
+                services_info = self._get_ecs_services(cluster_data['clusterArn'])
+
+                cluster = {
+                    'resource_id': cluster_data['clusterName'],
+                    'resource_name': cluster_data['clusterName'],
+                    'resource_type': 'ECS',
+                    'region': self.region,
+                    'status': cluster_data.get('status', 'N/A'),
+                    'running_tasks': cluster_data.get('runningTasksCount', 0),
+                    'pending_tasks': cluster_data.get('pendingTasksCount', 0),
+                    'active_services': cluster_data.get('activeServicesCount', 0),
+                    'capacity_providers': cluster_data.get('capacityProviders', []),
+                    'arn': cluster_data['clusterArn'],
+                    'services': services_info,
+                    'vulnerabilities': vulnerabilities,
+                }
+                clusters.append(cluster)
+
+            return clusters
+        except Exception as e:
+            print(f"ECS scan error in {self.region}: {e}")
+            return []
+
+    def _get_ecs_services(self, cluster_arn: str) -> List[Dict]:
+        """Get ECS services for a cluster"""
+        try:
+            services = []
+            list_resp = self.clients['ecs'].list_services(cluster=cluster_arn, maxResults=100)
+            service_arns = list_resp.get('serviceArns', [])
+
+            if not service_arns:
+                return []
+
+            desc_resp = self.clients['ecs'].describe_services(
+                cluster=cluster_arn,
+                services=service_arns
+            )
+
+            for svc in desc_resp.get('services', []):
+                services.append({
+                    'name': svc['serviceName'],
+                    'status': svc.get('status', 'N/A'),
+                    'desired_count': svc.get('desiredCount', 0),
+                    'running_count': svc.get('runningCount', 0),
+                    'launch_type': svc.get('launchType', 'N/A'),
+                    'task_definition': svc.get('taskDefinition', 'N/A'),
+                })
+
+            return services
+        except Exception as e:
+            print(f"ECS services error: {e}")
+            return []
+
+    def _check_ecs_vulnerabilities(self, cluster_data: Dict) -> List[Dict]:
+        """Check ECS cluster for vulnerabilities"""
+        vulnerabilities = []
+
+        # Check Container Insights
+        settings = cluster_data.get('settings', [])
+        container_insights_enabled = False
+        for setting in settings:
+            if setting.get('name') == 'containerInsights' and setting.get('value') == 'enabled':
+                container_insights_enabled = True
+                break
+
+        if not container_insights_enabled:
+            vulnerabilities.append({
+                'id': 'ECS-NO-CONTAINER-INSIGHTS',
+                'title': 'ECS Container Insights Disabled',
+                'severity': 'MEDIUM',
+                'description': 'Container Insights is not enabled for monitoring and observability',
+                'remediation': 'Enable Container Insights for the cluster',
+                'source': 'custom'
+            })
+
+        # Check if using default capacity provider (EC2 without Fargate)
+        capacity_providers = cluster_data.get('capacityProviders', [])
+        if not capacity_providers:
+            vulnerabilities.append({
+                'id': 'ECS-NO-CAPACITY-PROVIDER',
+                'title': 'ECS No Capacity Provider Strategy',
+                'severity': 'LOW',
+                'description': 'Cluster has no capacity provider strategy configured',
+                'remediation': 'Configure capacity provider strategy for better resource management',
+                'source': 'custom'
+            })
+
+        # Check execute command configuration
+        config = cluster_data.get('configuration', {})
+        exec_config = config.get('executeCommandConfiguration', {})
+        if not exec_config.get('logging'):
+            vulnerabilities.append({
+                'id': 'ECS-EXEC-NO-LOGGING',
+                'title': 'ECS Execute Command Logging Not Configured',
+                'severity': 'MEDIUM',
+                'description': 'ECS Exec logging is not configured for audit trail',
+                'remediation': 'Enable ECS Exec logging to CloudWatch or S3',
+                'source': 'custom'
+            })
+
+        return vulnerabilities
+
     def scan_lambda_functions(self) -> List[Dict]:
         """Scan Lambda functions for vulnerabilities"""
         try:
             functions = []
             paginator = self.clients['lambda'].get_paginator('list_functions')
-            
+
             for page in paginator.paginate():
                 for function in page['Functions']:
                     vulnerabilities = self._check_lambda_vulnerabilities(function)
-                    
+
                     function_data = {
                         'resource_id': function['FunctionName'],
+                        'resource_name': function['FunctionName'],
                         'resource_type': 'Lambda',
+                        'region': self.region,
                         'runtime': function.get('Runtime', 'N/A'),
                         'last_modified': function['LastModified'],
                         'memory_size': function.get('MemorySize', 'N/A'),
@@ -95,29 +226,26 @@ class AWSScanner:
                         'vulnerabilities': vulnerabilities
                     }
                     functions.append(function_data)
-            
+
             return functions
         except Exception as e:
-            print(f"Lambda scan error: {e}")
+            print(f"Lambda scan error in {self.region}: {e}")
             return []
-    
+
     def _get_inspector_findings(self, resource_id: str) -> List[Dict]:
         """Get AWS Inspector findings for a resource"""
         try:
             findings = []
-            # Look for findings in the last 30 days
-            start_time = datetime.now() - timedelta(days=30)
-            
             response = self.clients['inspector2'].list_findings(
                 filterCriteria={
                     'resourceId': [{'comparison': 'EQUALS', 'value': resource_id}],
                     'findingStatus': [{'comparison': 'EQUALS', 'value': 'ACTIVE'}],
-                    'severity': [{'comparison': 'EQUALS', 'value': 'HIGH'}, 
+                    'severity': [{'comparison': 'EQUALS', 'value': 'HIGH'},
                                 {'comparison': 'EQUALS', 'value': 'MEDIUM'}]
                 },
                 maxResults=50
             )
-            
+
             for finding in response.get('findings', []):
                 findings.append({
                     'id': f"INSPECTOR-{finding.get('findingArn', '').split('/')[-1]}",
@@ -127,17 +255,16 @@ class AWSScanner:
                     'remediation': finding.get('remediation', {}).get('recommendation', {}).get('text', 'Review in AWS Inspector'),
                     'source': 'inspector'
                 })
-            
+
             return findings
         except Exception as e:
             print(f"Inspector findings error: {e}")
             return []
-    
+
     def _get_security_hub_findings(self, resource_id: str) -> List[Dict]:
         """Get AWS Security Hub findings for a resource"""
         try:
             findings = []
-            
             response = self.clients['securityhub'].get_findings(
                 Filters={
                     'ResourceId': [{'Value': resource_id, 'Comparison': 'EQUALS'}],
@@ -146,7 +273,7 @@ class AWSScanner:
                 },
                 MaxResults=50
             )
-            
+
             for finding in response.get('Findings', []):
                 severity = finding.get('Severity', {}).get('Label', 'MEDIUM').upper()
                 findings.append({
@@ -157,17 +284,16 @@ class AWSScanner:
                     'remediation': finding.get('Remediation', {}).get('Recommendation', {}).get('Text', 'Review in AWS Security Hub'),
                     'source': 'securityhub'
                 })
-            
+
             return findings
         except Exception as e:
             print(f"Security Hub findings error: {e}")
             return []
-    
+
     def _check_ec2_vulnerabilities(self, instance: Dict) -> List[Dict]:
         """Check EC2 instance for common vulnerabilities"""
         vulnerabilities = []
-        
-        # Check for public IP in public subnet
+
         if instance.get('PublicIpAddress'):
             vulnerabilities.append({
                 'id': 'EC2-PUBLIC-IP',
@@ -177,12 +303,10 @@ class AWSScanner:
                 'remediation': 'Move to private subnet or use NAT gateway',
                 'source': 'custom'
             })
-        
-        # Check security groups
+
         for sg in instance.get('SecurityGroups', []):
             vulnerabilities.extend(self._check_security_group_rules(sg['GroupId']))
-        
-        # Check IMDS configuration
+
         metadata_options = instance.get('MetadataOptions', {})
         if metadata_options.get('HttpTokens') != 'required':
             vulnerabilities.append({
@@ -193,8 +317,7 @@ class AWSScanner:
                 'remediation': 'Enforce IMDSv2 only',
                 'source': 'custom'
             })
-        
-        # Check if instance is in default VPC
+
         if 'vpc-' in instance.get('VpcId', '') and 'default' in instance.get('VpcId', ''):
             vulnerabilities.append({
                 'id': 'EC2-DEFAULT-VPC',
@@ -204,14 +327,13 @@ class AWSScanner:
                 'remediation': 'Migrate instance to custom VPC',
                 'source': 'custom'
             })
-        
+
         return vulnerabilities
-    
+
     def _check_eks_vulnerabilities(self, cluster: Dict) -> List[Dict]:
         """Check EKS cluster for vulnerabilities"""
         vulnerabilities = []
-        
-        # Check logging
+
         logging = cluster.get('logging', {}).get('clusterLogging', [{}])[0]
         if not logging.get('enabled', False):
             vulnerabilities.append({
@@ -222,8 +344,7 @@ class AWSScanner:
                 'remediation': 'Enable control plane logging for all log types',
                 'source': 'custom'
             })
-        
-        # Check public endpoint configuration
+
         vpc_config = cluster.get('resourcesVpcConfig', {})
         if vpc_config.get('endpointPublicAccess', False):
             if not vpc_config.get('endpointPrivateAccess', False):
@@ -235,8 +356,7 @@ class AWSScanner:
                     'remediation': 'Disable public endpoint or enable private access',
                     'source': 'custom'
                 })
-        
-        # Check encryption configuration
+
         if not cluster.get('encryptionConfig'):
             vulnerabilities.append({
                 'id': 'EKS-NO-ENCRYPTION',
@@ -246,14 +366,13 @@ class AWSScanner:
                 'remediation': 'Enable KMS encryption for Kubernetes secrets',
                 'source': 'custom'
             })
-        
+
         return vulnerabilities
-    
+
     def _check_lambda_vulnerabilities(self, function: Dict) -> List[Dict]:
         """Check Lambda function for vulnerabilities"""
         vulnerabilities = []
-        
-        # Check for excessive permissions
+
         if function.get('Role'):
             vulnerabilities.append({
                 'id': 'LAMBDA-POLICY-REVIEW',
@@ -263,8 +382,7 @@ class AWSScanner:
                 'remediation': 'Review and restrict IAM permissions following least privilege',
                 'source': 'custom'
             })
-        
-        # Check environment variables for potential secrets
+
         if function.get('Environment', {}).get('Variables'):
             vulnerabilities.append({
                 'id': 'LAMBDA-ENV-VARS',
@@ -274,8 +392,7 @@ class AWSScanner:
                 'remediation': 'Use AWS Secrets Manager for sensitive data instead of environment variables',
                 'source': 'custom'
             })
-        
-        # Check if function is in VPC
+
         if not function.get('VpcConfig'):
             vulnerabilities.append({
                 'id': 'LAMBDA-NO-VPC',
@@ -285,9 +402,9 @@ class AWSScanner:
                 'remediation': 'Consider deploying in VPC for enhanced network security',
                 'source': 'custom'
             })
-        
+
         return vulnerabilities
-    
+
     def _check_security_group_rules(self, sg_id: str) -> List[Dict]:
         """Check security group rules for vulnerabilities"""
         vulnerabilities = []
@@ -295,34 +412,29 @@ class AWSScanner:
             response = self.clients['ec2'].describe_security_group_rules(
                 Filters=[{'Name': 'group-id', 'Values': [sg_id]}]
             )
-            
+
             for rule in response['SecurityGroupRules']:
                 if rule.get('IsEgress', False):
                     continue
-                
-                # Check for open CIDR for SSH
+
                 if rule.get('CidrIpv4') == '0.0.0.0/0' and rule.get('FromPort') == 22:
                     vulnerabilities.append({
                         'id': 'SG-OPEN-SSH',
                         'title': 'SSH Open To Internet',
                         'severity': 'HIGH',
-                        'description': f'Security group allows SSH from anywhere (0.0.0.0/0)',
+                        'description': 'Security group allows SSH from anywhere (0.0.0.0/0)',
                         'remediation': 'Restrict SSH access to specific IP ranges',
                         'source': 'custom'
                     })
-                
-                # Check for open CIDR for RDP
                 elif rule.get('CidrIpv4') == '0.0.0.0/0' and rule.get('FromPort') == 3389:
                     vulnerabilities.append({
                         'id': 'SG-OPEN-RDP',
                         'title': 'RDP Open To Internet',
                         'severity': 'HIGH',
-                        'description': f'Security group allows RDP from anywhere (0.0.0.0/0)',
+                        'description': 'Security group allows RDP from anywhere (0.0.0.0/0)',
                         'remediation': 'Restrict RDP access to specific IP ranges',
                         'source': 'custom'
                     })
-                
-                # Check for other open ports
                 elif rule.get('CidrIpv4') == '0.0.0.0/0':
                     vulnerabilities.append({
                         'id': f'SG-OPEN-{rule.get("FromPort", "ANY")}',
@@ -332,8 +444,8 @@ class AWSScanner:
                         'remediation': 'Restrict source IP range to specific networks',
                         'source': 'custom'
                     })
-        
+
         except Exception as e:
             print(f"Error checking security group {sg_id}: {str(e)}")
-        
+
         return vulnerabilities

@@ -11,6 +11,7 @@ SEVERITY_LEVELS = {
 RESOURCE_TYPES = {
     'EC2': {'icon': '🖥️', 'service': 'ec2'},
     'EKS': {'icon': '☸️', 'service': 'eks'},
+    'ECS': {'icon': '📦', 'service': 'ecs'},
     'LAMBDA': {'icon': 'λ', 'service': 'lambda'}
 }
 
