@@ -22,28 +22,93 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
+    /* Header */
     .main-header {
-        font-size: 3rem;
-        color: #FF4B4B;
+        font-size: 2.4rem;
+        font-weight: 700;
+        color: #1a1a2e;
         text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 0.5rem;
+        letter-spacing: -0.5px;
     }
-    .severity-high { background-color: #FF4B4B; color: white; padding: 5px; border-radius: 3px; }
-    .severity-medium { background-color: #FFA500; color: white; padding: 5px; border-radius: 3px; }
-    .severity-low { background-color: #008000; color: white; padding: 5px; border-radius: 3px; }
-    .resource-card {
-        border-left: 5px solid #FF4B4B;
-        padding: 10px;
-        margin: 5px 0;
-        background-color: #f0f2f6;
+    .sub-header {
+        text-align: center;
+        color: #6c757d;
+        font-size: 1rem;
+        margin-bottom: 1.5rem;
     }
+
+    /* Severity badges */
+    .severity-high { background-color: #dc3545; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600; }
+    .severity-medium { background-color: #fd7e14; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600; }
+    .severity-low { background-color: #28a745; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600; }
+
+    /* Region badge */
     .region-badge {
         background-color: #232F3E;
         color: #FF9900;
         padding: 2px 8px;
-        border-radius: 3px;
-        font-size: 0.85em;
-        font-weight: bold;
+        border-radius: 4px;
+        font-size: 0.8em;
+        font-weight: 600;
+        font-family: monospace;
+    }
+
+    /* Metric cards */
+    [data-testid="stMetric"] {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 12px 16px;
+        text-align: center;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.85rem !important;
+        font-weight: 600;
+        color: #495057;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.8rem !important;
+        font-weight: 700;
+        color: #1a1a2e;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 6px 6px 0 0;
+        padding: 8px 20px;
+        font-weight: 600;
+    }
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #f8f9fa;
+    }
+    section[data-testid="stSidebar"] .stButton > button {
+        border-radius: 6px;
+        font-weight: 600;
+    }
+
+    /* Expanders */
+    .streamlit-expanderHeader {
+        font-size: 0.95rem;
+        font-weight: 500;
+    }
+
+    /* Dataframe */
+    .stDataFrame {
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    /* General text alignment */
+    .block-container {
+        padding-top: 2rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -117,6 +182,7 @@ class VulnerabilityDashboard:
     def display_dashboard(self):
         """Main dashboard display"""
         st.markdown('<h1 class="main-header">🛡️ AWS Vulnerability Remediation AI</h1>', unsafe_allow_html=True)
+        st.markdown('<p class="sub-header">Automated multi-region security scanning, AI-powered analysis &amp; one-click remediation</p>', unsafe_allow_html=True)
 
         # Sidebar controls
         selected_regions = self.display_sidebar()
@@ -212,33 +278,36 @@ class VulnerabilityDashboard:
 
     def display_welcome(self):
         """Display welcome screen"""
-        col1, col2, col3 = st.columns([1, 2, 1])
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 3, 1])
 
         with col2:
-            st.info("""
-            ## Welcome to AWS Vulnerability Remediation AI!
+            st.markdown("""
+            ### Getting Started
 
-            This tool helps you:
-            - 🔍 **Scan** your AWS resources (EC2, EKS, ECS, Lambda) for security vulnerabilities
-            - 🌍 **Multi-region** scanning across all AWS regions
-            - 🤖 **Analyze** vulnerabilities using AI-powered assessment
-            - ⚡ **Remediate** issues automatically with one click
-            - 📊 **Monitor** your cloud security posture
+            1. **Select regions** in the sidebar (or choose "All regions")
+            2. Click **Run Security Scan** to begin
+            3. Review vulnerabilities, run AI analysis, and remediate
 
-            Select your **regions** in the sidebar and click **'Run Security Scan'** to get started!
+            **Supported services:** EC2, EKS, ECS, Lambda
             """)
 
-            st.subheader("Supported Services")
-            col1, col2, col3, col4 = st.columns(4)
+        st.markdown("---")
+        st.markdown("#### Scan Coverage")
 
-            with col1:
-                st.metric("EC2", "Instances", "IMDSv2, SGs, Public IPs")
-            with col2:
-                st.metric("EKS", "Clusters", "Logging, Endpoints, Encryption")
-            with col3:
-                st.metric("ECS", "Clusters", "Insights, Exec Logging")
-            with col4:
-                st.metric("Lambda", "Functions", "Permissions, VPC, Env Vars")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.markdown("**🖥️ EC2 Instances**")
+            st.caption("Public IPs, Security Groups, IMDSv2, VPC placement")
+        with col2:
+            st.markdown("**☸️ EKS Clusters**")
+            st.caption("Control plane logging, endpoint access, KMS encryption")
+        with col3:
+            st.markdown("**📦 ECS Clusters**")
+            st.caption("Container Insights, capacity providers, exec logging")
+        with col4:
+            st.markdown("**λ Lambda Functions**")
+            st.caption("IAM permissions, environment variables, VPC config")
 
     def display_results(self):
         """Display scan results and analysis"""
