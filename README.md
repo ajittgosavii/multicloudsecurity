@@ -1,24 +1,64 @@
-# AWS Vulnerability Remediation AI
+# Multi-Cloud Security Scanner
 
-An AI-powered application for automatically detecting and remediating security vulnerabilities in AWS EC2, EKS, and Lambda services.
+Automated vulnerability scanner for AWS infrastructure with AI-powered analysis and one-click remediation.
 
-## Features
+## What it does
 
-- 🔍 Comprehensive AWS resource scanning
-- 🤖 AI-powered vulnerability analysis using AWS Bedrock
-- ⚡ Automated remediation with one-click fixes
-- 📊 Interactive dashboard with filtering and visualization
-- 🛡️ Enterprise-grade security within AWS ecosystem
+- Scans **EC2, EKS, ECS, and Lambda** resources across multiple AWS regions simultaneously
+- Detects security misconfigurations (open ports, IMDSv1, public endpoints, missing encryption, etc.)
+- Integrates with **AWS Inspector** and **Security Hub** for additional findings
+- Uses **AWS Bedrock** (Claude / Titan) to generate detailed remediation plans
+- Provides automated remediation for common issues (enforce IMDSv2, enable logging, etc.)
 
-## Quick Start
+## Architecture
 
-1. Clone the repository
-2. Copy `.env.example` to `.env` and configure AWS credentials
-3. Install dependencies: `pip install -r requirements.txt`
-4. Run: `streamlit run app.py`
+```
+app.py                  ← Streamlit dashboard entry point
+src/
+  cloud/
+    connector.py        ← AWS session & client management
+    scanner.py          ← Multi-region resource scanner
+  analysis/
+    ai_engine.py        ← Bedrock-powered vulnerability analysis
+  remediation/
+    executor.py         ← Automated remediation actions
+  core/
+    settings.py         ← Severity levels, resource types
+.streamlit/
+  config.toml           ← Theme & server config
+```
 
-## Prerequisites
+## Setup
 
-- AWS Account with appropriate permissions
-- AWS Bedrock model access (Claude 3, Titan, or Jurassic-2)
-- Python 3.8+
+### Local
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+Set these environment variables (or create a `.env` file):
+
+```
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+```
+
+### Streamlit Cloud
+
+Add secrets in **Settings > Secrets** using TOML format:
+
+```toml
+AWS_ACCESS_KEY_ID = "..."
+AWS_SECRET_ACCESS_KEY = "..."
+AWS_REGION = "us-east-1"
+BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+```
+
+## Requirements
+
+- Python 3.12+
+- AWS account with EC2, EKS, ECS, Lambda, Bedrock access
+- IAM credentials with read permissions (+ write for remediation)

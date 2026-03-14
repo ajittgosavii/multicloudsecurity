@@ -1,582 +1,380 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
-import json
-import time
 
-from config.aws_config import AWSConfig, ALL_REGIONS
-from modules.aws_scanner import AWSScanner
-from modules.vulnerability_analyzer import VulnerabilityAnalyzer
-from modules.remediation_engine import RemediationEngine
+from src.cloud import AWSConnector, MultiRegionScanner, ALL_REGIONS
+from src.analysis import AISecurityAnalyzer
+from src.remediation import RemediationExecutor
 
-# Page configuration
+# ---------------------------------------------------------------------------
+# Page setup
+# ---------------------------------------------------------------------------
+
 st.set_page_config(
-    page_title="AWS Vulnerability Remediation AI",
+    page_title="Multi-Cloud Security Scanner",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Custom CSS
 st.markdown("""
 <style>
-    /* Header */
-    .main-header {
-        font-size: 2.4rem;
-        font-weight: 700;
-        color: #1a1a2e;
-        text-align: center;
-        margin-bottom: 0.5rem;
-        letter-spacing: -0.5px;
+    .app-title {
+        font-size: 2.2rem; font-weight: 700; color: #1a1a2e;
+        text-align: center; margin-bottom: 0.25rem; letter-spacing: -0.5px;
     }
-    .sub-header {
-        text-align: center;
-        color: #6c757d;
-        font-size: 1rem;
-        margin-bottom: 1.5rem;
+    .app-subtitle {
+        text-align: center; color: #6c757d; font-size: 0.95rem; margin-bottom: 1.5rem;
     }
-
-    /* Severity badges */
-    .severity-high { background-color: #dc3545; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600; }
-    .severity-medium { background-color: #fd7e14; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600; }
-    .severity-low { background-color: #28a745; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600; }
-
-    /* Region badge */
-    .region-badge {
-        background-color: #232F3E;
-        color: #FF9900;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.8em;
-        font-weight: 600;
-        font-family: monospace;
+    .sev-high   { background:#dc3545; color:#fff; padding:3px 10px; border-radius:12px; font-size:.8em; font-weight:600; }
+    .sev-medium { background:#fd7e14; color:#fff; padding:3px 10px; border-radius:12px; font-size:.8em; font-weight:600; }
+    .sev-low    { background:#28a745; color:#fff; padding:3px 10px; border-radius:12px; font-size:.8em; font-weight:600; }
+    .region-tag {
+        background:#232F3E; color:#FF9900; padding:2px 8px; border-radius:4px;
+        font-size:.8em; font-weight:600; font-family:monospace;
     }
-
-    /* Metric cards */
     [data-testid="stMetric"] {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 8px;
-        padding: 12px 16px;
-        text-align: center;
+        background:#f8f9fa; border:1px solid #e9ecef; border-radius:8px;
+        padding:12px 16px; text-align:center;
     }
-    [data-testid="stMetricLabel"] {
-        font-size: 0.85rem !important;
-        font-weight: 600;
-        color: #495057;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    [data-testid="stMetricValue"] {
-        font-size: 1.8rem !important;
-        font-weight: 700;
-        color: #1a1a2e;
-    }
-
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 6px 6px 0 0;
-        padding: 8px 20px;
-        font-weight: 600;
-    }
-
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        background-color: #f8f9fa;
-    }
-    section[data-testid="stSidebar"] .stButton > button {
-        border-radius: 6px;
-        font-weight: 600;
-    }
-
-    /* Expanders */
-    .streamlit-expanderHeader {
-        font-size: 0.95rem;
-        font-weight: 500;
-    }
-
-    /* Dataframe */
-    .stDataFrame {
-        border-radius: 8px;
-        overflow: hidden;
-    }
-
-    /* General text alignment */
-    .block-container {
-        padding-top: 2rem;
-    }
+    [data-testid="stMetricLabel"]  { font-size:.85rem!important; font-weight:600; color:#495057; text-transform:uppercase; letter-spacing:.5px; }
+    [data-testid="stMetricValue"]  { font-size:1.8rem!important; font-weight:700; color:#1a1a2e; }
+    .stTabs [data-baseweb="tab-list"] { gap:8px; }
+    .stTabs [data-baseweb="tab"]      { border-radius:6px 6px 0 0; padding:8px 20px; font-weight:600; }
+    section[data-testid="stSidebar"] { background:#f8f9fa; }
+    section[data-testid="stSidebar"] .stButton>button { border-radius:6px; font-weight:600; }
+    .block-container { padding-top:2rem; }
 </style>
 """, unsafe_allow_html=True)
 
 
-class VulnerabilityDashboard:
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+
+class SecurityDashboard:
+
     def __init__(self):
-        self.aws_config = AWSConfig()
-        # Initialize session state
-        if 'scan_results' not in st.session_state:
-            st.session_state.scan_results = None
-        if 'selected_vulnerabilities' not in st.session_state:
-            st.session_state.selected_vulnerabilities = []
-        if 'remediation_results' not in st.session_state:
-            st.session_state.remediation_results = {}
+        self.connector = AWSConnector()
+        for key in ('scan_results', 'selected_vulns', 'remediation_log'):
+            if key not in st.session_state:
+                st.session_state[key] = None if key == 'scan_results' else ([] if key == 'selected_vulns' else {})
 
-    def run_scan(self, selected_regions):
-        """Run comprehensive AWS scan across selected regions"""
-        all_resources = []
-        scan_errors = []
+    # ---- sidebar --------------------------------------------------------
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        for i, region in enumerate(selected_regions):
-            status_text.text(f"Scanning {region} ({i+1}/{len(selected_regions)})...")
-            progress_bar.progress((i) / len(selected_regions))
-
-            try:
-                clients = self.aws_config.get_clients(region)
-                scanner = AWSScanner(clients, region)
-
-                ec2_results = scanner.scan_ec2_instances()
-                all_resources.extend(ec2_results)
-
-                eks_results = scanner.scan_eks_clusters()
-                all_resources.extend(eks_results)
-
-                ecs_results = scanner.scan_ecs_clusters()
-                all_resources.extend(ecs_results)
-
-                lambda_results = scanner.scan_lambda_functions()
-                all_resources.extend(lambda_results)
-
-            except Exception as e:
-                scan_errors.append(f"{region}: {str(e)}")
-
-        progress_bar.progress(1.0)
-        status_text.text(f"Scan complete! Found {len(all_resources)} resources across {len(selected_regions)} regions.")
-
-        # Flatten vulnerabilities
-        vulnerability_list = []
-        for resource in all_resources:
-            if 'vulnerabilities' in resource:
-                for vuln in resource['vulnerabilities']:
-                    vuln_data = vuln.copy()
-                    vuln_data['resource_id'] = resource['resource_id']
-                    vuln_data['resource_type'] = resource['resource_type']
-                    vuln_data['region'] = resource.get('region', 'N/A')
-                    vuln_data['resource_name'] = resource.get('resource_name', 'N/A')
-                    vulnerability_list.append(vuln_data)
-
-        st.session_state.scan_results = {
-            'resources': all_resources,
-            'vulnerabilities': vulnerability_list,
-            'scan_time': datetime.now().isoformat(),
-            'regions_scanned': selected_regions,
-            'errors': scan_errors,
-        }
-
-    def display_dashboard(self):
-        """Main dashboard display"""
-        st.markdown('<h1 class="main-header">🛡️ AWS Vulnerability Remediation AI</h1>', unsafe_allow_html=True)
-        st.markdown('<p class="sub-header">Automated multi-region security scanning, AI-powered analysis &amp; one-click remediation</p>', unsafe_allow_html=True)
-
-        # Sidebar controls
-        selected_regions = self.display_sidebar()
-
-        # Main content area
-        if st.session_state.scan_results is None:
-            self.display_welcome()
-        else:
-            # Show scan errors if any
-            errors = st.session_state.scan_results.get('errors', [])
-            if errors:
-                with st.expander(f"⚠️ {len(errors)} region(s) had scan errors", expanded=False):
-                    for err in errors:
-                        st.warning(err)
-            self.display_results()
-
-    def display_sidebar(self):
-        """Display sidebar controls"""
+    def _sidebar(self):
         with st.sidebar:
-            st.header("Controls")
+            st.header("Scan Settings")
 
-            # Region selector
-            st.subheader("AWS Regions")
-            region_mode = st.radio(
-                "Region selection",
-                ["All regions", "Select regions"],
-                index=1
-            )
-
-            if region_mode == "All regions":
-                selected_regions = ALL_REGIONS
-                st.caption(f"Will scan {len(ALL_REGIONS)} regions")
+            mode = st.radio("Region scope", ["Select regions", "All regions"], index=0)
+            if mode == "All regions":
+                regions = ALL_REGIONS
+                st.caption(f"{len(regions)} regions selected")
             else:
-                selected_regions = st.multiselect(
-                    "Choose regions to scan",
-                    ALL_REGIONS,
-                    default=['us-east-1', 'us-west-2']
-                )
+                regions = st.multiselect("Regions", ALL_REGIONS, default=['us-east-1', 'us-west-2'])
 
             st.divider()
 
-            if st.button("🚀 Run Security Scan", use_container_width=True):
-                if selected_regions:
-                    self.run_scan(selected_regions)
-                    st.rerun()
+            if st.button("🚀 Run Scan", use_container_width=True):
+                if not regions:
+                    st.error("Select at least one region.")
                 else:
-                    st.error("Please select at least one region.")
+                    self._run_scan(regions)
+                    st.rerun()
 
             if st.session_state.scan_results:
-                scanned = st.session_state.scan_results.get('regions_scanned', [])
-                st.caption(f"Last scan: {len(scanned)} region(s) at {st.session_state.scan_results.get('scan_time', 'N/A')[:19]}")
-
-                if st.button("🔄 Refresh Scan", use_container_width=True):
-                    self.run_scan(selected_regions)
+                meta = st.session_state.scan_results
+                st.caption(f"Last scan: {len(meta['regions'])} region(s) · {meta['timestamp'][:19]}")
+                if st.button("🔄 Refresh", use_container_width=True):
+                    self._run_scan(regions)
                     st.rerun()
 
             st.divider()
             st.header("Filters")
+            filtered = self._apply_filters()
+            st.session_state['_filtered'] = filtered
 
-            if st.session_state.scan_results:
-                vulnerabilities = st.session_state.scan_results['vulnerabilities']
+        return regions
 
-                if vulnerabilities:
-                    # Region filter
-                    regions = sorted(set([v.get('region', 'N/A') for v in vulnerabilities]))
-                    selected_region_filter = st.multiselect("Regions", regions, default=regions)
+    def _apply_filters(self):
+        if not st.session_state.scan_results:
+            return []
+        vulns = st.session_state.scan_results['vulnerabilities']
+        if not vulns:
+            return []
 
-                    # Resource type filter
-                    resource_types = sorted(set([v['resource_type'] for v in vulnerabilities]))
-                    selected_types = st.multiselect("Resource Types", resource_types, default=resource_types)
+        all_regions = sorted({v.get('region', 'N/A') for v in vulns})
+        all_types = sorted({v['resource_type'] for v in vulns})
+        all_sevs = sorted({v['severity'] for v in vulns})
 
-                    # Severity filter
-                    severities = list(set([v['severity'] for v in vulnerabilities]))
-                    selected_severities = st.multiselect("Severity Levels", severities, default=severities)
+        sel_regions = st.multiselect("Region", all_regions, default=all_regions)
+        sel_types = st.multiselect("Service", all_types, default=all_types)
+        sel_sevs = st.multiselect("Severity", all_sevs, default=all_sevs)
 
-                    # Vulnerability type filter
-                    vuln_types = sorted(set([v['id'] for v in vulnerabilities]))
-                    selected_vuln_types = st.multiselect("Vulnerability Types", vuln_types, default=vuln_types)
+        return [v for v in vulns
+                if v.get('region') in sel_regions
+                and v['resource_type'] in sel_types
+                and v['severity'] in sel_sevs]
 
-                    # Apply filters
-                    filtered_vulns = [
-                        v for v in vulnerabilities
-                        if v['resource_type'] in selected_types
-                        and v['severity'] in selected_severities
-                        and v['id'] in selected_vuln_types
-                        and v.get('region', 'N/A') in selected_region_filter
-                    ]
-                    st.session_state.filtered_vulnerabilities = filtered_vulns
-                else:
-                    st.session_state.filtered_vulnerabilities = []
+    # ---- scan -----------------------------------------------------------
 
-        return selected_regions
+    def _run_scan(self, regions):
+        scanner = MultiRegionScanner(self.connector)
+        progress = st.progress(0)
+        status = st.empty()
 
-    def display_welcome(self):
-        """Display welcome screen"""
-        st.markdown("---")
-        col1, col2, col3 = st.columns([1, 3, 1])
+        def on_progress(region, idx, total):
+            status.text(f"Scanning {region}  ({idx + 1}/{total})")
+            progress.progress(idx / total)
 
-        with col2:
-            st.markdown("""
-            ### Getting Started
+        resources, errors = scanner.scan(regions, on_progress=on_progress)
+        progress.progress(1.0)
+        status.text(f"Done — {len(resources)} resources across {len(regions)} regions")
 
-            1. **Select regions** in the sidebar (or choose "All regions")
-            2. Click **Run Security Scan** to begin
-            3. Review vulnerabilities, run AI analysis, and remediate
+        vuln_list = []
+        for r in resources:
+            for v in r.get('vulnerabilities', []):
+                entry = v.copy()
+                entry['resource_id'] = r['resource_id']
+                entry['resource_type'] = r['resource_type']
+                entry['region'] = r.get('region', 'N/A')
+                entry['resource_name'] = r.get('resource_name', 'N/A')
+                vuln_list.append(entry)
 
-            **Supported services:** EC2, EKS, ECS, Lambda
-            """)
+        st.session_state.scan_results = {
+            'resources': resources,
+            'vulnerabilities': vuln_list,
+            'timestamp': datetime.now().isoformat(),
+            'regions': regions,
+            'errors': errors,
+        }
 
-        st.markdown("---")
-        st.markdown("#### Scan Coverage")
+    # ---- main layout ----------------------------------------------------
 
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown("**🖥️ EC2 Instances**")
-            st.caption("Public IPs, Security Groups, IMDSv2, VPC placement")
-        with col2:
-            st.markdown("**☸️ EKS Clusters**")
-            st.caption("Control plane logging, endpoint access, KMS encryption")
-        with col3:
-            st.markdown("**📦 ECS Clusters**")
-            st.caption("Container Insights, capacity providers, exec logging")
-        with col4:
-            st.markdown("**λ Lambda Functions**")
-            st.caption("IAM permissions, environment variables, VPC config")
+    def render(self):
+        st.markdown('<h1 class="app-title">🛡️ Multi-Cloud Security Scanner</h1>', unsafe_allow_html=True)
+        st.markdown('<p class="app-subtitle">Automated multi-region vulnerability scanning · AI-powered analysis · One-click remediation</p>', unsafe_allow_html=True)
 
-    def display_results(self):
-        """Display scan results and analysis"""
-        resources = st.session_state.scan_results['resources']
-        vulnerabilities = st.session_state.get('filtered_vulnerabilities', [])
+        self._sidebar()
 
-        # Summary metrics
-        self.display_metrics(resources, vulnerabilities)
-
-        # Detailed views
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "📋 Vulnerabilities",
-            "🔧 Resources",
-            "🤖 AI Analysis",
-            "⚡ Remediation"
-        ])
-
-        with tab1:
-            self.display_vulnerabilities_tab(vulnerabilities)
-
-        with tab2:
-            self.display_resources_tab(resources)
-
-        with tab3:
-            self.display_analysis_tab(vulnerabilities)
-
-        with tab4:
-            self.display_remediation_tab(vulnerabilities)
-
-    def display_metrics(self, resources, vulnerabilities):
-        """Display summary metrics"""
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
-
-        total_resources = len(resources)
-        total_vulns = len(vulnerabilities)
-        high_vulns = len([v for v in vulnerabilities if v['severity'] == 'HIGH'])
-        medium_vulns = len([v for v in vulnerabilities if v['severity'] == 'MEDIUM'])
-        low_vulns = len([v for v in vulnerabilities if v['severity'] == 'LOW'])
-        regions_scanned = len(st.session_state.scan_results.get('regions_scanned', []))
-
-        with col1:
-            st.metric("Regions Scanned", regions_scanned)
-        with col2:
-            st.metric("Total Resources", total_resources)
-        with col3:
-            st.metric("Total Vulnerabilities", total_vulns)
-        with col4:
-            st.metric("High Severity", high_vulns, delta_color="inverse")
-        with col5:
-            st.metric("Medium Severity", medium_vulns, delta_color="inverse")
-        with col6:
-            st.metric("Low Severity", low_vulns)
-
-        if vulnerabilities:
-            chart_col1, chart_col2 = st.columns(2)
-
-            with chart_col1:
-                fig = px.pie(
-                    names=['High', 'Medium', 'Low'],
-                    values=[high_vulns, medium_vulns, low_vulns],
-                    title="Vulnerability Severity Distribution",
-                    color=['High', 'Medium', 'Low'],
-                    color_discrete_map={'High': 'red', 'Medium': 'orange', 'Low': 'green'}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-            with chart_col2:
-                # Resources by region chart
-                region_counts = {}
-                for r in resources:
-                    reg = r.get('region', 'Unknown')
-                    region_counts[reg] = region_counts.get(reg, 0) + 1
-
-                if region_counts:
-                    fig2 = px.bar(
-                        x=list(region_counts.keys()),
-                        y=list(region_counts.values()),
-                        title="Resources by Region",
-                        labels={'x': 'Region', 'y': 'Count'},
-                        color=list(region_counts.values()),
-                        color_continuous_scale='Oranges'
-                    )
-                    fig2.update_layout(showlegend=False)
-                    st.plotly_chart(fig2, use_container_width=True)
-
-    def display_vulnerabilities_tab(self, vulnerabilities):
-        """Display vulnerabilities in a detailed table"""
-        if not vulnerabilities:
-            st.info("No vulnerabilities found matching the current filters.")
+        if not st.session_state.scan_results:
+            self._welcome()
             return
 
-        # Summary table
-        vuln_df = pd.DataFrame([{
-            'Region': v.get('region', 'N/A'),
-            'Resource Type': v['resource_type'],
-            'Resource ID': v['resource_id'],
-            'Severity': v['severity'],
-            'Vulnerability': v['title'],
-        } for v in vulnerabilities])
-        st.dataframe(vuln_df, use_container_width=True, hide_index=True)
+        errors = st.session_state.scan_results.get('errors', [])
+        if errors:
+            with st.expander(f"⚠️ {len(errors)} region(s) had errors", expanded=False):
+                for e in errors:
+                    st.warning(e)
 
+        vulns = st.session_state.get('_filtered', [])
+        resources = st.session_state.scan_results['resources']
+
+        self._metrics(resources, vulns)
+
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 Vulnerabilities", "🔧 Resources", "🤖 AI Analysis", "⚡ Remediation"])
+        with tab1:
+            self._tab_vulnerabilities(vulns)
+        with tab2:
+            self._tab_resources(resources)
+        with tab3:
+            self._tab_analysis(vulns)
+        with tab4:
+            self._tab_remediation(vulns)
+
+    # ---- welcome --------------------------------------------------------
+
+    def _welcome(self):
+        st.markdown("---")
+        _, center, _ = st.columns([1, 3, 1])
+        with center:
+            st.markdown("""
+### Getting Started
+1. **Select regions** in the sidebar (or scan all)
+2. Click **Run Scan**
+3. Review findings, run AI analysis, and remediate
+""")
+        st.markdown("---")
+        st.markdown("#### Scan Coverage")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown("**🖥️ EC2 Instances**")
+            st.caption("Public IPs · Security Groups · IMDSv2 · VPC placement")
+        with c2:
+            st.markdown("**☸️ EKS Clusters**")
+            st.caption("Control plane logging · Endpoint access · KMS encryption")
+        with c3:
+            st.markdown("**📦 ECS Clusters**")
+            st.caption("Container Insights · Capacity providers · Exec logging")
+        with c4:
+            st.markdown("**λ Lambda Functions**")
+            st.caption("IAM permissions · Environment variables · VPC config")
+
+    # ---- metrics --------------------------------------------------------
+
+    def _metrics(self, resources, vulns):
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        high = sum(1 for v in vulns if v['severity'] == 'HIGH')
+        med = sum(1 for v in vulns if v['severity'] == 'MEDIUM')
+        low = sum(1 for v in vulns if v['severity'] == 'LOW')
+        c1.metric("Regions", len(st.session_state.scan_results['regions']))
+        c2.metric("Resources", len(resources))
+        c3.metric("Findings", len(vulns))
+        c4.metric("High", high, delta_color="inverse")
+        c5.metric("Medium", med, delta_color="inverse")
+        c6.metric("Low", low)
+
+        if not vulns:
+            return
+
+        left, right = st.columns(2)
+        with left:
+            fig = px.pie(names=['High', 'Medium', 'Low'], values=[high, med, low],
+                         title="Severity Breakdown",
+                         color_discrete_map={'High': '#dc3545', 'Medium': '#fd7e14', 'Low': '#28a745'})
+            st.plotly_chart(fig, use_container_width=True)
+        with right:
+            rc = {}
+            for r in resources:
+                rc[r.get('region', '?')] = rc.get(r.get('region', '?'), 0) + 1
+            fig2 = px.bar(x=list(rc.keys()), y=list(rc.values()),
+                          title="Resources by Region",
+                          labels={'x': 'Region', 'y': 'Count'},
+                          color=list(rc.values()), color_continuous_scale='Oranges')
+            fig2.update_layout(showlegend=False)
+            st.plotly_chart(fig2, use_container_width=True)
+
+    # ---- tabs -----------------------------------------------------------
+
+    def _tab_vulnerabilities(self, vulns):
+        if not vulns:
+            st.info("No findings match the current filters.")
+            return
+
+        df = pd.DataFrame([{
+            'Region': v.get('region'),
+            'Service': v['resource_type'],
+            'Resource': v['resource_id'],
+            'Severity': v['severity'],
+            'Finding': v['title'],
+        } for v in vulns])
+        st.dataframe(df, use_container_width=True, hide_index=True)
         st.divider()
 
-        # Expandable details
-        for idx, vuln in enumerate(vulnerabilities):
-            region_badge = f"<span class='region-badge'>{vuln.get('region', 'N/A')}</span>"
-            with st.expander(f"{vuln['severity']} | {vuln.get('region', '')} | {vuln['resource_type']} - {vuln['title']} - {vuln['resource_id']}"):
-                col1, col2 = st.columns(2)
+        for i, v in enumerate(vulns):
+            with st.expander(f"{v['severity']} · {v.get('region','')} · {v['resource_type']} — {v['title']} — {v['resource_id']}"):
+                a, b = st.columns(2)
+                a.write(f"**Resource:** {v['resource_type']} / {v['resource_id']}")
+                a.write(f"**Region:** {v.get('region')}")
+                a.write(f"**Severity:** {v['severity']}")
+                a.write(f"**ID:** {v['id']}")
+                b.write(f"**Description:** {v['description']}")
+                b.write(f"**Remediation:** {v.get('remediation', '—')}")
+                if st.button("Add to remediation queue", key=f"sel_{i}"):
+                    if v not in st.session_state.selected_vulns:
+                        st.session_state.selected_vulns.append(v)
+                        st.success("Added!")
 
-                with col1:
-                    st.write(f"**Resource:** {vuln['resource_type']} - {vuln['resource_id']}")
-                    st.write(f"**Region:** {vuln.get('region', 'N/A')}")
-                    st.write(f"**Severity:** {vuln['severity']}")
-                    st.write(f"**Vulnerability ID:** {vuln['id']}")
-
-                with col2:
-                    st.write(f"**Description:** {vuln['description']}")
-                    st.write(f"**Remediation:** {vuln.get('remediation', 'Not specified')}")
-
-                if st.button("Select for Remediation", key=f"select_{idx}"):
-                    if vuln not in st.session_state.selected_vulnerabilities:
-                        st.session_state.selected_vulnerabilities.append(vuln)
-                        st.success("Added to remediation queue!")
-
-    def display_resources_tab(self, resources):
-        """Display resource details"""
+    def _tab_resources(self, resources):
         if not resources:
             st.info("No resources found.")
             return
-
-        # Group by resource type
         by_type = {}
         for r in resources:
-            rtype = r.get('resource_type', 'Unknown')
-            by_type.setdefault(rtype, []).append(r)
-
-        for rtype, items in sorted(by_type.items()):
-            st.subheader(f"{rtype} ({len(items)})")
-            for resource in items:
-                label = f"{resource.get('region', 'N/A')} | {resource.get('resource_id', 'Unknown')}"
-                if resource.get('resource_name') and resource['resource_name'] != 'N/A':
-                    label += f" ({resource['resource_name']})"
-                vuln_count = len(resource.get('vulnerabilities', []))
-                label += f" - {vuln_count} vulnerabilities"
-
+            by_type.setdefault(r.get('resource_type', '?'), []).append(r)
+        for rtype in sorted(by_type):
+            items = by_type[rtype]
+            st.subheader(f"{rtype}  ({len(items)})")
+            for r in items:
+                name = r.get('resource_name', '')
+                label = f"{r.get('region')} · {r['resource_id']}"
+                if name and name != 'N/A':
+                    label += f" ({name})"
+                vc = len(r.get('vulnerabilities', []))
+                label += f" — {vc} finding{'s' if vc != 1 else ''}"
                 with st.expander(label):
-                    display_data = {k: v for k, v in resource.items() if k != 'vulnerabilities'}
-                    st.json(display_data, expanded=False)
+                    st.json({k: v for k, v in r.items() if k != 'vulnerabilities'}, expanded=False)
 
-    def display_analysis_tab(self, vulnerabilities):
-        """Display AI-powered analysis"""
-        st.header("🤖 AI-Powered Vulnerability Analysis")
-
-        if not vulnerabilities:
-            st.info("No vulnerabilities to analyze.")
+    def _tab_analysis(self, vulns):
+        st.header("🤖 AI-Powered Analysis")
+        if not vulns:
+            st.info("No findings to analyze.")
             return
 
-        selected_vuln = st.selectbox(
-            "Select vulnerability for detailed AI analysis:",
-            options=vulnerabilities,
-            format_func=lambda x: f"{x.get('region', '')} | {x['severity']} - {x['title']} - {x['resource_id']}"
-        )
-
-        if selected_vuln and st.button("Generate AI Analysis"):
-            with st.spinner("🤖 AI is analyzing the vulnerability..."):
-                resource_context = next(
-                    (r for r in st.session_state.scan_results['resources']
-                     if r['resource_id'] == selected_vuln['resource_id']),
-                    {}
-                )
-
-                # Get clients for the resource's region
-                region = selected_vuln.get('region', self.aws_config.region)
-                clients = self.aws_config.get_clients(region)
-                analyzer = VulnerabilityAnalyzer(clients)
-                analysis = analyzer.analyze_vulnerability(selected_vuln, resource_context)
+        sel = st.selectbox("Select finding:",
+                           vulns,
+                           format_func=lambda v: f"{v.get('region')} · {v['severity']} — {v['title']} — {v['resource_id']}")
+        if sel and st.button("Generate Analysis"):
+            with st.spinner("Analyzing with Bedrock…"):
+                ctx = next((r for r in st.session_state.scan_results['resources']
+                            if r['resource_id'] == sel['resource_id']), {})
+                region = sel.get('region', self.connector.default_region)
+                clients = self.connector.clients(region)
+                analyzer = AISecurityAnalyzer(clients)
+                result = analyzer.analyze(sel, ctx)
 
                 st.subheader("Risk Assessment")
-                st.write(analysis.get('risk_assessment', 'No assessment available'))
-
+                st.write(result.get('risk_assessment', '—'))
                 st.subheader("Remediation Steps")
-                for step in analysis.get('remediation_steps', []):
-                    st.write(f"• {step}")
-
+                for s in result.get('remediation_steps', []):
+                    st.write(f"• {s}")
                 st.subheader("AWS Commands")
-                for cmd in analysis.get('aws_commands', []):
-                    st.code(cmd, language='bash')
+                for c in result.get('aws_commands', []):
+                    st.code(c, language='bash')
+                st.subheader("Impact")
+                st.write(result.get('impact', '—'))
+                st.subheader("Verification")
+                for s in result.get('verification', []):
+                    st.write(f"• {s}")
 
-                st.subheader("Potential Impact")
-                st.write(analysis.get('impact', 'Not specified'))
-
-                st.subheader("Verification Steps")
-                for step in analysis.get('verification', []):
-                    st.write(f"• {step}")
-
-    def display_remediation_tab(self, vulnerabilities):
-        """Display remediation interface"""
-        st.header("⚡ Automated Remediation")
-
-        selected_vulns = st.session_state.selected_vulnerabilities
-
-        if not selected_vulns:
-            st.info("No vulnerabilities selected for remediation. Select vulnerabilities from the Vulnerabilities tab.")
+    def _tab_remediation(self, vulns):
+        st.header("⚡ Remediation")
+        selected = st.session_state.selected_vulns
+        if not selected:
+            st.info("Select findings from the Vulnerabilities tab to add them here.")
             return
 
-        st.subheader("Selected for Remediation")
-        for idx, vuln in enumerate(selected_vulns):
-            col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-            with col1:
-                st.write(f"**{vuln['title']}** - {vuln['resource_id']}")
-            with col2:
-                st.write(f"`{vuln.get('region', 'N/A')}`")
-            with col3:
-                st.write(f"`{vuln['severity']}`")
-            with col4:
-                if st.button("Remove", key=f"remove_{idx}"):
-                    st.session_state.selected_vulnerabilities.remove(vuln)
-                    st.rerun()
+        st.subheader("Remediation Queue")
+        for i, v in enumerate(selected):
+            c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+            c1.write(f"**{v['title']}** — {v['resource_id']}")
+            c2.write(f"`{v.get('region')}`")
+            c3.write(f"`{v['severity']}`")
+            if c4.button("Remove", key=f"rm_{i}"):
+                st.session_state.selected_vulns.remove(v)
+                st.rerun()
 
-        if st.button("🚀 Remediate All Selected", type="primary"):
-            self.execute_bulk_remediation(selected_vulns)
+        if st.button("🚀 Remediate All", type="primary"):
+            bar = st.progress(0)
+            msg = st.empty()
+            for i, v in enumerate(selected):
+                msg.text(f"Remediating {v['title']} in {v.get('region')}…")
+                region = v.get('region', self.connector.default_region)
+                clients = self.connector.clients(region)
+                analyzer = AISecurityAnalyzer(clients)
+                executor = RemediationExecutor(clients)
+                ctx = next((r for r in st.session_state.scan_results['resources']
+                            if r['resource_id'] == v['resource_id']), {})
+                analysis = analyzer.analyze(v, ctx)
+                result = executor.remediate(v['resource_type'], v['resource_id'], v, analysis)
+                key = f"{v.get('region')}/{v['resource_id']}_{v['id']}"
+                st.session_state.remediation_log[key] = result
+                bar.progress((i + 1) / len(selected))
+            msg.text("Done!")
+            st.success("✅ All selected findings have been processed.")
 
-        if st.session_state.remediation_results:
-            st.subheader("Remediation History")
-            for result_id, result in st.session_state.remediation_results.items():
-                status_color = "🟢" if result['status'] == 'success' else "🔴" if result['status'] == 'error' else "🟡"
-                st.write(f"{status_color} {result_id}: {result['message']}")
+        if st.session_state.remediation_log:
+            st.subheader("History")
+            for rid, res in st.session_state.remediation_log.items():
+                icon = {"success": "🟢", "error": "🔴"}.get(res['status'], "🟡")
+                st.write(f"{icon} {rid}: {res['message']}")
 
-    def execute_bulk_remediation(self, vulnerabilities):
-        """Execute remediation for multiple vulnerabilities"""
-        progress_bar = st.progress(0)
-        status_text = st.empty()
 
-        for i, vuln in enumerate(vulnerabilities):
-            status_text.text(f"Remediating {vuln['title']} in {vuln.get('region', 'N/A')}...")
-
-            resource_context = next(
-                (r for r in st.session_state.scan_results['resources']
-                 if r['resource_id'] == vuln['resource_id']),
-                {}
-            )
-
-            region = vuln.get('region', self.aws_config.region)
-            clients = self.aws_config.get_clients(region)
-            analyzer = VulnerabilityAnalyzer(clients)
-            remediator = RemediationEngine(clients)
-
-            analysis = analyzer.analyze_vulnerability(vuln, resource_context)
-
-            result = remediator.remediate_vulnerability(
-                vuln['resource_type'],
-                vuln['resource_id'],
-                vuln,
-                analysis
-            )
-
-            result_id = f"{vuln.get('region', 'N/A')}/{vuln['resource_id']}_{vuln['id']}"
-            st.session_state.remediation_results[result_id] = result
-
-            progress_bar.progress((i + 1) / len(vulnerabilities))
-
-        status_text.text("Remediation completed!")
-        st.success("✅ All selected vulnerabilities have been processed!")
-
+# ---------------------------------------------------------------------------
 
 def main():
-    dashboard = VulnerabilityDashboard()
-    dashboard.display_dashboard()
-
+    SecurityDashboard().render()
 
 if __name__ == "__main__":
     main()
