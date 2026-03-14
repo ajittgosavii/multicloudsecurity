@@ -76,6 +76,13 @@ class SecurityDashboard:
 
             st.divider()
 
+            # Credential status
+            if self.connector._access_key:
+                masked = self.connector._access_key[:4] + "****"
+                st.success(f"AWS credentials loaded ({masked})")
+            else:
+                st.error("AWS credentials not found. Add them in Settings → Secrets.")
+
             if st.button("🚀 Run Scan", use_container_width=True):
                 if not regions:
                     st.error("Select at least one region.")

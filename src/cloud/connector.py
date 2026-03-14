@@ -15,11 +15,19 @@ ALL_REGIONS = [
 
 
 def _get_secret(key, default=None):
+    # Try Streamlit secrets (multiple access patterns)
     try:
         import streamlit as st
-        return st.secrets.get(key, os.getenv(key, default))
+        # Direct key access
+        if key in st.secrets:
+            return st.secrets[key]
+        # Nested under [aws] section
+        if "aws" in st.secrets and key in st.secrets["aws"]:
+            return st.secrets["aws"][key]
     except Exception:
-        return os.getenv(key, default)
+        pass
+    # Fall back to environment variable
+    return os.getenv(key, default)
 
 
 class AWSConnector:
