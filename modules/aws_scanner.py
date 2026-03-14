@@ -43,7 +43,7 @@ class AWSScanner:
             return instances
         except Exception as e:
             print(f"EC2 scan error: {e}")
-            return [{'error': f'EC2 scan failed: {str(e)}'}]
+            return []
     
     def scan_eks_clusters(self) -> List[Dict]:
         """Scan EKS clusters for vulnerabilities"""
@@ -72,7 +72,7 @@ class AWSScanner:
             return clusters
         except Exception as e:
             print(f"EKS scan error: {e}")
-            return [{'error': f'EKS scan failed: {str(e)}'}]
+            return []
     
     def scan_lambda_functions(self) -> List[Dict]:
         """Scan Lambda functions for vulnerabilities"""
@@ -99,7 +99,7 @@ class AWSScanner:
             return functions
         except Exception as e:
             print(f"Lambda scan error: {e}")
-            return [{'error': f'Lambda scan failed: {str(e)}'}]
+            return []
     
     def _get_inspector_findings(self, resource_id: str) -> List[Dict]:
         """Get AWS Inspector findings for a resource"""

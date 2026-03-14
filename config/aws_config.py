@@ -4,12 +4,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+def _get_secret(key, default=None):
+    """Read from Streamlit secrets first, then fall back to env vars."""
+    try:
+        import streamlit as st
+        return st.secrets.get(key, os.getenv(key, default))
+    except Exception:
+        return os.getenv(key, default)
+
 class AWSConfig:
     def __init__(self):
-        self.region = os.getenv('AWS_REGION', 'us-east-1')
-        self.access_key = os.getenv('AWS_ACCESS_KEY_ID')
-        self.secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
-        self.bedrock_model = os.getenv('BEDROCK_MODEL_ID')
+        self.region = _get_secret('AWS_REGION', 'us-east-1')
+        self.access_key = _get_secret('AWS_ACCESS_KEY_ID')
+        self.secret_key = _get_secret('AWS_SECRET_ACCESS_KEY')
+        self.bedrock_model = _get_secret('BEDROCK_MODEL_ID')
         
     def get_session(self):
         return boto3.Session(
