@@ -1,0 +1,28 @@
+/* Custom Streamlit styles */
+.main-header {
+    font-size: 3rem;
+    color: #FF4B4B;
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.severity-critical { background-color: #FF0000; color: white; padding: 5px; border-radius: 3px; }
+.severity-high { background-color: #FF4B4B; color: white; padding: 5px; border-radius: 3px; }
+.severity-medium { background-color: #FFA500; color: white; padding: 5px; border-radius: 3px; }
+.severity-low { background-color: #008000; color: white; padding: 5px; border-radius: 3px; }
+.severity-info { background-color: #0066CC; color: white; padding: 5px; border-radius: 3px; }
+
+.resource-card { 
+    border-left: 5px solid #FF4B4B; 
+    padding: 10px; 
+    margin: 5px 0; 
+    background-color: #f0f2f6;
+}
+
+.remediation-success { border-left: 5px solid #008000; }
+.remediation-error { border-left: 5px solid #FF0000; }
+.remediation-warning { border-left: 5px solid #FFA500; }
+
+.stProgress > div > div > div > div {
+    background-color: #FF4B4B;
+}
